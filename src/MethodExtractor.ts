@@ -1,6 +1,6 @@
 import { ClassAnalyer, SourceAnalyser, SourceFileDescriptor } from 'dotup-vscode-api-extensions';
 import * as fs from 'fs';
-import { ImportDeclaration, MethodSignature, NamedImports, SyntaxKind, TypeReferenceNode } from 'typescript';
+import { ClassLikeDeclaration, ImportDeclaration, MethodSignature, NamedImports, SyntaxKind, TypeReferenceNode } from 'typescript';
 import * as vscode from 'vscode';
 import { FileFinder } from './FileFinder';
 import { TypeDefinitionAnalyser } from './TypeDefinitionAnalyser';
@@ -26,37 +26,46 @@ export class MethodExtractor {
 		const importDeclaration = this.getImportDeclaration(sourceDescriptor, className);
 
 		// File has no import statements
-		if (importDeclaration === undefined) {
-			return;
+		let cDec;
+		if (importDeclaration) {
+			const dts = new FileFinder();
+			const definitionFilePath = dts.find(document.uri.fsPath, importDeclaration, className);
+			const dtsContent = fs.readFileSync(definitionFilePath, 'UTF-8');
+	
+			const ana = new SourceAnalyser();
+			cDec = ana.analyse('tmp', dtsContent);
+			cDec = cDec.classDeclarations.find(x => {
+				let dec = x as ClassLikeDeclaration;
+				let clsName = dec.name.getText();
+				return clsName == className;
+			});
+		} else {
+			cDec = sourceDescriptor.classDeclarations.find(x => {
+				let dec = x as ClassLikeDeclaration;
+				let clsName = dec.name.getText();
+				return clsName == className;
+			});
 		}
 
-		const dts = new FileFinder();
-		const definitionFilePath = dts.find(document.uri.fsPath, importDeclaration, className);
-		const dtsContent = fs.readFileSync(definitionFilePath, 'UTF-8');
-
-		// const sourceFile = createSourceFile('tmp', dtsContent, ScriptTarget.Latest, true);
-		const ana = new TypeDefinitionAnalyser(className);
-		ana.analyse(dtsContent);
-		// const classToExtendFromSourceFile = this.getClassToExtendFrom(path.dirname(sourceFilePath), importDeclaration, out);
-		// const classToExtendFromSourceFile = this.getClassToExtendFrom(definitionFilePath, importDeclaration, out);
-
-
-		// // Class declaration file not found
-		// if (classToExtendFromSourceFile === undefined) {
-		// 	return;
-		// }
-
-		// const classToExtendFrom = classToExtendFromSourceFile.classDescriptors.find(c => c.className === className);
-
-		// // Class declaration not found
-		// if (classToExtendFrom === undefined) {
-		// 	return;
-		// }
-
 		const ca = new ClassAnalyer();
-		const cDec = ana.classDeclarations.find(x => x.getName() === className);
-		const classDescriptor = ca.getClassDescriptor(cDec.compilerNode);
-		return classDescriptor.methods;
+		const classDescriptor = ca.getClassDescriptor(cDec as any);
+		let methods: MethodSignature[] = [];
+		for (const method of classDescriptor.classDeclaration.members) {
+			if (method.kind == SyntaxKind.MethodDeclaration) {
+				// is private ?
+				let isPrivate = false;
+				if (method.modifiers) {
+					for (const m of method.modifiers) {
+						if (m.kind == SyntaxKind.PrivateKeyword) {
+							isPrivate = true;
+							break;
+						}
+					}
+				}
+				if (!isPrivate) methods.push(method as any);
+			}
+		}
+		return methods;
 	}
 
 	getClassNameToOverrideFrom(sourceDescriptor: SourceFileDescriptor, position: vscode.Position): string {
@@ -97,10 +106,9 @@ export class MethodExtractor {
 	getImportDeclaration(sourceDescriptor: SourceFileDescriptor, className: string): ImportDeclaration {
 		const extendsSource = sourceDescriptor.importClause.find(imp => {
 			const x: ImportDeclaration = <ImportDeclaration>imp;
-			return x.importClause.getText() === className;
-
-			const bindings = <NamedImports>x.importClause.namedBindings;
-			return bindings.elements.some(x => x.name.getText() === className);
+			const txt = x.moduleSpecifier.getText().replace(/["']/g, '');
+			let arr = txt.split('/');
+			return arr[arr.length-1] == className;
 		});
 
 		return <ImportDeclaration>extendsSource;

@@ -49,7 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
 					const completition = new vscode.CompletionItem('override.' + m.name.getText(), vscode.CompletionItemKind.Method)
 
 					let text = NodePrinter.printNode(m);
-					text = `${text.replace(';', '').trim()} {\n}`;
+					text = `${text.replace(/\{[\s\S]+\}/g, '').replace(';', '').trim()} {\n}`;
 					text = methodExtractor.isAsyncMethod(m) ? `async ${text}` : text;
 					completition.insertText = text;
 					completition.range = new vscode.Range(new vscode.Position(position.line, position.character - 'override.'.length), position);
